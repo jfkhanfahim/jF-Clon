@@ -5,35 +5,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip project
+      - name: Unzip if needed
         run: |
           ls -la
-          if [ -f jf.zip ]; then unzip -o jf.zip -d temp_unzip; mv temp_unzip/*/* . 2>/dev/null || mv temp_unzip/* . 2>/dev/null || true; rm -rf temp_unzip jf.zip; fi
-          if [ -d "jf-clon (1)" ]; then mv "jf-clon (1)"/* . 2>/dev/null; rm -rf "jf-clon (1)"; fi
+          for z in *.zip; do [ -f "$z" ] && unzip -o "$z" -d . && rm "$z" || true; done
+          if [ -d "jf-clon (1)" ]; then cp -r "jf-clon (1)"/* .; rm -rf "jf-clon (1)"; fi
           ls -la
       - uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
-      - uses: android-actions/setup-android@v3
-      - name: Fix gradle
+          java-version: '17'
+      - name: Fix gradle and build
         run: |
           python3 << 'PY'
           import pathlib, re
-          p = pathlib.Path("app/build.gradle.kts")
-          if p.exists():
-              s = p.read_text()
-              s = re.sub(r".*google.*services.*\n", "", s)
-              s = re.sub(r".*firebase.*\n", "", s, flags=re.I)
-              s = re.sub(r".*secrets.*\n", "", s, flags=re.I)
-              s = re.sub(r"alias\(libs\.plugins\.firebase.*\)", "", s)
-              s = re.sub(r"ksp\(libs\.firebase.*\)", "", s)
-              p.write_text(s)
+          f=pathlib.Path("app/build.gradle.kts")
+          if f.exists():
+            t=f.read_text()
+            t=re.sub(r".*google.*services.*\n","",t)
+            t=re.sub(r".*firebase.*\n","",t,flags=re.I)
+            t=re.sub(r".*secrets.*\n","",t,flags=re.I)
+            t=re.sub(r"alias\(libs\.plugins\.firebase[^)]+\)","",t)
+            t=re.sub(r"ksp\(libs\.firebase[^)]+\)","",t)
+            f.write_text(t)
           PY
-          echo "y" | keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           chmod +x ./gradlew
-      - name: Build
-        run: ./gradlew assembleDebug --stacktrace
+          yes | sdkmanager --licenses || true
+          ./gradlew assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: JF-Clon-APK
