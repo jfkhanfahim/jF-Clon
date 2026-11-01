@@ -16,37 +16,32 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Unzip project if uploaded as archive
+      - name: Unzip and Flatten Project
         run: |
           ls -la
-          # কোনো জিপ ফাইল থাকলে তা এক্সট্র্যাক্ট করবে
           for z in *.zip; do
-            if [ -f "$z" ]; then
-              echo "Extracting archive: $z"
-              unzip -o "$z" -d .
-              rm -f "$z"
-            fi
+            [ -f "$z" ] && unzip -o "$z" -d . && rm -f "$z" || true
           done
-
-          # ফোল্ডার 'jf-clon (1)' বা নেস্টেড ডিরেক্টরি থাকলে ফাইলগুলো রুটে সরিয়ে আনবে
+          
           if [ -d "jf-clon (1)" ]; then
-            echo "Found nested folder 'jf-clon (1)', moving contents to root..."
-            shopt -s dotglob
-            cp -r "jf-clon (1)"/* .
+            echo "Moving files from jf-clon (1)"
+            shopt -s dotglob nullglob
+            mv "jf-clon (1)"/* . || true
             rm -rf "jf-clon (1)"
-            shopt -u dotglob
+            shopt -u dotglob nullglob
           fi
-
-          for d in */; do
-            if [ -f "${d}settings.gradle.kts" ] && [ "$d" != "./" ] && [ "$d" != "app/" ]; then
-              echo "Found project files inside $d, moving to root..."
+          
+          # যদি অন্য কোনো ফোল্ডারের ভেতর gradlew থাকে
+          if [ ! -f "./gradlew" ]; then
+            FOUND=$(find . -maxdepth 3 -name "gradlew" -type f | head -1)
+            if [ -n "$FOUND" ]; then
+              DIR=$(dirname "$FOUND")
+              echo "Found gradlew in $DIR, moving up"
               shopt -s dotglob
-              cp -r "$d"* .
-              rm -rf "$d"
+              mv "$DIR"/* . || true
               shopt -u dotglob
-              break
             fi
-          done
+          fi
           ls -la
 
       - name: Set up JDK 17
@@ -62,52 +57,31 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Fix environment and build configuration
+      - name: Fix environment
         run: |
-          # ১. বেস৬৪ থেকে debug.keystore রিস্টোর করা অথবা নতুন কি-স্টোর তৈরি করা
           if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            echo "Restoring debug.keystore from base64..."
             base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f "debug.keystore" ]; then
-            echo "Generating fallback debug keystore..."
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           fi
-
-          # ২. .env বা .env.example নিশ্চিত করা যাতে Secrets প্লাগিন এরর না দেয়
-          if [ ! -f ".env.example" ]; then
-            touch .env.example
+          [ -f ".env.example" ] || touch .env.example
+          [ -f ".env" ] || cp .env.example .env || touch .env
+          
+          # Firebase না থাকলে যেন ফেইল না করে
+          if [ ! -f "app/google-services.json" ]; then
+            echo '{"project_info":{"project_number":"000","project_id":"dummy"},"client":[{"client_info":{"mobilesdk_app_id":"1:000:android:000","package_name":"com.example"}}]}' > app/google-services.json || true
           fi
-          if [ ! -f ".env" ]; then
-            cp .env.example .env 2>/dev/null || touch .env
-          fi
-
-          # ৩. google-services.json না থাকলে বিল্ড যেন আটকে না যায় তার নিরাপদ হ্যান্ডলিং
-          python3 << 'PY'
-          import pathlib
-          f = pathlib.Path("app/build.gradle.kts")
-          if f.exists():
-              t = f.read_text()
-              if not pathlib.Path("app/google-services.json").exists():
-                  if "missingGoogleServicesStrategy" not in t:
-                      t += "\ngoogleServices { missingGoogleServicesStrategy = com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy.WARN }\n"
-              f.write_text(t)
-          PY
-
-          # ৪. gradlew তৈরি এবং এক্সিকিউটেবল পারমিশন দেওয়া
-          if [ ! -f "./gradlew" ]; then
-            gradle wrapper || true
-          fi
+          
+          chmod +x ./gradlew || gradle wrapper
           chmod +x ./gradlew
-
-          # ৫. SDK লাইসেন্স গ্রহণ করা
           yes | sdkmanager --licenses || true
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: JF-Clon-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/debug/*.apk
           if-no-files-found: error
