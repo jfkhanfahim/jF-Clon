@@ -1,0 +1,37 @@
+name: Build APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip project
+        run: |
+          unzip -o jf.zip -d .
+          mv "jf-clon (1)"/* . 2>/dev/null || mv jf-clon*/* . 2>/dev/null || true
+          rm -rf "jf-clon (1)" jf.zip
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: android-actions/setup-android@v3
+      - name: Fix project
+        run: |
+          sed -i '/google.services/d' app/build.gradle.kts || true
+          sed -i '/firebase/d' app/build.gradle.kts || true
+          sed -i '/secrets/d' app/build.gradle.kts || true
+          sed -i 's/alias(libs.plugins.firebase.appdistribution)//' app/build.gradle.kts || true
+          sed -i 's/alias(libs.plugins.firebase.crashlytics)//' app/build.gradle.kts || true
+          sed -i 's/ksp(libs.firebase.crashlytics.gradle)//' app/build.gradle.kts || true
+          sed -i 's/.*KEYSTORE_PATH.*/      storeFile = file("${rootDir}\/debug.keystore")/' app/build.gradle.kts || true
+          sed -i 's/.*KEYSTORE_PASSWORD.*/      storePassword = "android"/' app/build.gradle.kts || true
+          sed -i 's/.*KEY_ALIAS.*/      keyAlias = "androiddebugkey"/' app/build.gradle.kts || true
+          sed -i 's/.*KEY_PASSWORD.*/      keyPassword = "android"/' app/build.gradle.kts || true
+          echo "y" | keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
+          chmod +x ./gradlew
+      - name: Build
+        run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JF-Clon-APK
+          path: app/build/outputs/apk/debug/*.apk
